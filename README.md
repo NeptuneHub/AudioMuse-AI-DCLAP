@@ -29,7 +29,11 @@ Also get the required data from the release of this project:
 | `model_epoch_36.onnx.data` | External weights — **must be in same folder** |
 | `clap_text_model.onnx` | Teacher text encoder, from LAION CLAP exported in .onnx |
 
-Using this model the output expected is a 512-dim L2-normalized embeddings on both text and songs audio on which you can run the similarity with dot product. Below a code example run on CPU:
+Using this model the output expected is a 512-dim L2-normalized embeddings on both text and songs audio on which you can run the similarity with dot product. 
+
+> The songs must be splitted in 10s segment with 50% overlap. Each segment is inferenced singularly and then all the segment avaraged together before the similarity check against the text.
+
+Below a code example run on CPU:
 
 
 ```python
