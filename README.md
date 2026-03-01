@@ -6,7 +6,7 @@ AudioMuse-AI Distilled CLAP (DCLAP) distill the [LAION CLAP](https://github.com/
 
 ## Distillation
 
-The goal is simple: distill LAION CLAP's behaviour while cutting the audio tower from ~80 M params to ~7 M and running 5–6× faster (performance test done on a Raspberry PI 5 8GB ram and SSD).  A pre‑trained CLAP (`music_audioset_epoch_15_esc_90.14.pt`) supervises a tiny student, initialised with *mn10as* weights from [EfficientAT](https://github.com/fschmid56/EfficientAT).  When this student plateaus on validation cosine, we freeze it and add a second, even smaller student seeded with [EdgeNeXt](https://github.com/mmaaz60/EdgeNeXt) weights.  The newcomer is trained to push the cosine higher until no more gain shows.
+The goal is simple: distill LAION CLAP's behaviour while cutting the audio tower from ~80 M params to ~7 M and **running 5–6× faster** (performance test done on a Raspberry PI 5 8GB ram and SSD).  A pre‑trained CLAP (`music_audioset_epoch_15_esc_90.14.pt`) supervises a tiny student, initialised with *mn10as* weights from [EfficientAT](https://github.com/fschmid56/EfficientAT).  When this student plateaus on validation cosine, we freeze it and add a second, even smaller student seeded with [EdgeNeXt](https://github.com/mmaaz60/EdgeNeXt) weights.  The newcomer is trained to push the cosine higher until no more gain shows.
 
 The two students are finally fused via a gate that outputs a 512‑dimensional weight vector, deciding—for each feature—how much to trust the second model versus the frozen first.
 
