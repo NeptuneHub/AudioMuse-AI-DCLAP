@@ -1,6 +1,6 @@
 # AudioMuse-AI-DCLAP
 
-AudioMuse-AI Distilled CLAP (DCLAP) distill the [LAION CLAP](https://github.com/LAION-AI/CLAP) audio tower into a tiny 7 M‑parameter model while retaining its 512‑dimensional embedding space.  The result is a **very fast text‑to‑music search engine**: you type words and retrieve matching music snippets in real time.
+AudioMuse-AI Distilled CLAP (DCLAP) distill the [LAION CLAP](https://github.com/LAION-AI/CLAP) audio tower into a tiny 7 M‑parameter model while retaining its 512‑dimensional embedding space.  The result is a **very fast text‑to‑music search engine** that can run even on a Raspberry PI 5 8GB ram and SSD.
 
 > only the audio branch is distilled; the original text tower is reused (exported from LAION CLAP in `.onnx`).
 
