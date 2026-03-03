@@ -1,0 +1,126 @@
+distillation:
+  audio_enabled: true
+  text_enabled: false
+audio:
+  sample_rate: 48000
+  segment_length: 480000   # 10 seconds at 48kHz
+  hop_length: 240000       # 5 seconds (50% overlap)
+  # Student mel-spectrogram params (EfficientAT)
+  # hop=480 = 48000*0.01 (100 fps, 10ms) — aligned to teacher for same segment count
+  student:
+    n_mels: 128
+    n_fft: 2048
+    hop_length_stft: 480
+    fmin: 0
+    fmax: 14000
+  # Teacher mel-spectrogram params (HTSAT-base / laion_clap)
+  # hop=480 = 48000*0.01 (100 fps, 10ms) — HTSAT max is 1024 frames: 480000/480=1000 ≤ 1024 ✓
+  # NOTE: hop=320 is for 32kHz models. At 48kHz the equivalent 10ms hop is 480.
+  teacher:
+    n_mels: 64
+    n_fft: 1024
+    hop_length_stft: 480
+    fmin: 50
+    fmax: 14000
+
+model:
+  embedding_dim: 512
+  dropout: 0.3  # Dropout probability for projection head
+  # EfficientAT configuration
+  # Available models: mn01_as, mn02_as, mn04_as, mn05_as, mn10_as, mn20_as, mn30_as, mn40_as
+  # You can also use the dynamic MobileNet variants 'dymn04', 'dymn10', 'dymn20' as prefixes
+  # e.g. 'dymn10_as' will map to width_mult=1.0 and use the corresponding AudioSet pre-trained weights
+  # Default uses the canonical pretrained key so there is no ambiguity (pass 'dymn10_as' is still accepted)
+  efficientat_model: "mn10_as"
+  student_efficientat_model: "mn04_as"  # Override for trainable student in fusion mode (null = same as efficientat_model)
+  # Fusion backbone: "efficientat", "deit_tiny", "mobilevitv2", or "edgenext"
+  # - "efficientat": EfficientAT MobileNet CNN (mn04_as, ~0.98M params)
+  # - "deit_tiny": DeiT-tiny ViT (5.7M params, 224×224 input, 192-dim output)
+  # - "mobilevitv2": MobileViTv2-050 hybrid CNN+Transformer (1.4M params, 256×256 input, 256-dim output)
+  # - "edgenext": EdgeNeXt-XX-Small hybrid CNN+SDTA Transformer (1.16M params, 256×256 input, 168-dim output)
+  # All resize the student mel (128 bands) inside the model — no separate mel cache needed.
+  fusion_backbone: "edgenext"
+  # component variant for EdgeNeXt; choose x_small or xx_small
+  edgenext_variant: "edgenext_x_small"
+  use_pretrained: true  # Use AudioSet/ImageNet pretrained weights
+  specialist_checkpoint: "../model/checkpoint_epoch_9.pth"  # Frozen specialist for fusion model (set to null to disable)
+  use_gradient_checkpointing: true
+  segment_batch_size: 5  # Process N segments at a time to reduce memory
+
+model_text:
+  embedding_dim: 512
+  hidden_dim: 256
+  num_layers: 2
+  nhead: 4
+
+training:
+  use_amp: false               # Use bfloat16 mixed precision for forward passes (model weights stay FP32)
+  augmentation_enabled: true  # Set to false to disable all spectrogram augmentations
+  batch_size: 64
+  gradient_accumulation_steps: 1
+  learning_rate: 0.003 # Original: 0.003
+  warmup_enabled: true  # Linear LR warmup during epoch 1 (from 0 to learning_rate)
+  epochs: 100
+  stage2_epochs: 50
+  stage2_learning_rate: 0.001 # Original: 0.001
+  # Stage 2 scheduler options
+  stage2_lr_scheduler:
+    # If true, Stage 2 will reuse the Stage 1 scheduler (ReduceLROnPlateau) instead of
+    # CosineAnnealingLR. This is useful when you want identical scheduler behavior across stages.
+    use_stage1_scheduler: true
+    min_lr: 1e-6
+  projection_only: false
+  optimizer: "adamw"
+  weight_decay: 0.1
+  grad_clip: 1.0
+  training_strategy: "both"
+  save_every: 1
+  export_onnx_every_epoch: true  # If true, export audio ONNX model after every epoch (can be slow)
+  # Mixup augmentation: alpha parameter for Beta(alpha, alpha). 0 disables Mixup
+  mixup_alpha: 0.1
+  global_mixup: true  # If true, mix at segment level across all songs (zero data loss); if false, old song-level mixup
+  # Loss function: "mse", "cosine", or "kl". Cosine/KL disable MSE and semantic.
+  # "kl": KL divergence on softmax distributions (Beyer-style distillation), temperature from logit_scale
+  loss_function: "cosine"
+  # Loss scaling options
+  loss_temperature: 0.7       # Static temperature (divide cosine by this value). If using logit scale, set use_logit_scale=True
+  use_logit_scale: true       # If true, use a learnable logit_scale (exp(logit_scale) applied to cosine)
+  init_logit_scale: 2.6592    # Initial value = ln(1/0.07) matching TinyCLAP initialization
+  max_logit_scale_T: 50       # Max temperature (T) for learnable logit_scale clamp. logit_scale clamped to [0, ln(T)]
+  # Focal-style weighting for cosine (set gamma>0 to enable)
+  loss_focal_gamma: 0       # gamma > 0 focuses gradients on hard (low-cosine) samples
+  loss_focal_low_threshold: 0.65  # cosine <= low -> full weight
+  loss_focal_high_threshold: 0.80 # cosine >= high -> zero weight; interpolate between low and high
+  # Whether to L2-normalize embeddings before computing MSE loss (default: true)
+  normalize_embeddings: false
+  lambda_semantic: 0.1  # Weight for semantic alignment loss (query-based distillation)
+  semantic_temperature: 1  # Temperature for KLD softmax (lower = sharper peaks, forces ranking)
+  use_teacher_embedding_cache: false # If false, always recompute teacher embeddings from (augmented) mel; mel cache still used
+  lr_scheduler:
+    use_cosine_annealing: false  # If true, use CosineAnnealingLR instead of ReduceLROnPlateau in Stage 1
+    mode: 'max'             # monitor metric to maximize (we monitor validation cosine)
+    factor: 0.1             # LR reduction factor
+    patience: 3             # Number of epochs with no improvement before reducing LR
+    threshold: 0.005       # Minimum relative improvement to be considered as improvement
+    threshold_mode: 'rel'   # 'rel' or 'abs'
+    min_lr: 1e-6            # Minimum LR
+
+
+paths:
+  teacher_model: "../model/clap_audio_model.pt"
+  teacher_model_text: "../model/clap_text_model.pt"
+  mel_cache: "/Volumes/audiomuse/student_clap_cache/mel_spectrograms.db"
+  checkpoints: "./checkpoints"
+  logs: "./logs"
+  final_model: "./models/student_clap_audio.onnx"
+  final_model_text: "./models/final_text_model.onnx"
+  text_json: "../model/text.json"
+
+dataset:
+  fma_path: "/Volumes/USB256/FMA"
+  validation_path: "/Volumes/USB256/FMA_VAL"
+  sample_size: 0
+
+logging:
+  level: "INFO"
+  log_every: 10
