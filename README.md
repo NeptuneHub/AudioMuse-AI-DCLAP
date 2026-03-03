@@ -33,6 +33,8 @@ Using this model the output expected is a 512-dim L2-normalized embeddings on bo
 
 > The songs must be splitted in 10s segment with 50% overlap. Each segment is inferenced singularly and then all the segment avaraged together before the similarity check against the text.
 
+> The text model is exported in .onnx to have all on the same technology but no change was made. The tokenizer is directly downloaded in the code with `AutoTokenizer.from_pretrained("laion/clap-htsat-unfused")` that is a roberta-base tokenizer
+
 Below a code example run on CPU:
 
 
