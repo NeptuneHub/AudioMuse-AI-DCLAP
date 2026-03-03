@@ -12,6 +12,8 @@ The two students are finally fused via a gate that outputs a 512‑dimensional w
 
 The dataset for the distillation proces consists of various Creative Commons and public‑domain songs; see the [dataset_license](dataset_license) directory for full details.
 
+The code used for training is in [student_clap](./student_clap) folder.
+
 ## Quick Start
 This command are tested on Linux and MacOS, to be executed on windows they will require some adaptation.
 
