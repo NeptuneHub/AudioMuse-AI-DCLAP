@@ -35,7 +35,7 @@ Using this model the output expected is a 512-dim L2-normalized embeddings on bo
 
 > The songs must be splitted in 10s segment with 50% overlap. Each segment is inferenced singularly and then all the segment avaraged together before the similarity check against the text.
 
-> The text model is exported in .onnx to have all on the same technology but no change was made. The tokenizer is directly downloaded in the code with `AutoTokenizer.from_pretrained("laion/clap-htsat-unfused")` that is a roberta-base tokenizer
+> The text model is exported in .onnx to have all on the same technology but no change was made. The tokenizer is directly downloaded in the code with `AutoTokenizer.from_pretrained("roberta-base")` that is a roberta-base tokenizer
 
 Below a code example run on CPU:
 
@@ -49,32 +49,28 @@ from transformers import AutoTokenizer
 # === CONFIGURATION ===
 AUDIO_PATH = "your_audio.wav"       # Path to your audio file
 TEXT_QUERY = "Calm piano song"      # Your playlist/mood query string
-STUDENT_AUDIO_MODEL = "student_clap_epoch_XX.onnx"  # Your trained ONNX
-TEXT_MODEL = "student_clap_text_encoder.onnx"       # Paired ONNX text encoder
-SR = 44100
+STUDENT_AUDIO_MODEL = "model_epoch_36.onnx"         # Student audio encoder ONNX
+TEXT_MODEL = "clap_text_model.onnx"                 # Paired ONNX text encoder
+SR = 48000
 SEGMENT_DURATION = 10.0   # seconds per window
 OVERLAP_RATIO = 0.5       # e.g., 0.5 for 50% overlap
-N_MELS = 64
-N_FFT = 1024
-HOP_LENGTH_MELS = 480
+N_MELS = 128
+N_FFT = 2048
+HOP_LENGTH_MEL = 480
 
 # -- Use the SAME tokenizer as used at student training time --
-tokenizer = AutoTokenizer.from_pretrained("laion/clap-htsat-unfused")  # See your config
+tokenizer = AutoTokenizer.from_pretrained("roberta-base")
 
-def extract_segmented_logmels(audio_path: str) -> np.ndarray:
-    y, _ = librosa.load(audio_path, sr=SR)
-    seg_len = int(SEGMENT_DURATION * SR)
-    hop_len = int(seg_len * (1 - OVERLAP_RATIO))
-    segments = []
-    for i in range(0, len(y) - seg_len + 1, hop_len):
-        segment = y[i:i+seg_len]
-        mel = librosa.feature.melspectrogram(y=segment, sr=SR, n_fft=N_FFT,
-                                             hop_length=HOP_LENGTH_MELS, n_mels=N_MELS)
-        log_mel = librosa.power_to_db(mel, ref=np.max)
-        # --- CLAP normalization trick, keep in-distribution with teacher ---
-        log_mel = ((log_mel + 42.6) / 25.9).T.astype(np.float32)
-        segments.append(log_mel[np.newaxis, np.newaxis, :, :]) # [1, 1, Time, Mels]
-    return np.concatenate(segments, axis=0) if segments else None
+def compute_mel_spectrogram(segment: np.ndarray) -> np.ndarray:
+    # Quantize to int16 and back (matching LAION CLAP teacher preprocessing)
+    segment = np.clip(segment, -1.0, 1.0)
+    segment = (segment * 32767.0).astype(np.int16)
+    segment = (segment / 32767.0).astype(np.float32)
+    mel = librosa.feature.melspectrogram(y=segment, sr=SR, n_fft=N_FFT,
+                                         hop_length=HOP_LENGTH_MEL, n_mels=N_MELS)
+    log_mel = librosa.power_to_db(mel, ref=1.0, amin=1e-10, top_db=None)
+    # Shape: (1, 1, n_mels, time) — no transpose
+    return log_mel[np.newaxis, np.newaxis, :, :].astype(np.float32)
 
 def cosine_similarity(v1, v2):
     v1 = v1.reshape(-1)
@@ -82,18 +78,28 @@ def cosine_similarity(v1, v2):
     return np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2))
 
 # -- Load Student ONNX Models --
-audio_model = ort.InferenceSession(STUDENT_AUDIO_MODEL)
+audio_session = ort.InferenceSession(STUDENT_AUDIO_MODEL)
 text_model = ort.InferenceSession(TEXT_MODEL)
 
 # -- AUDIO INFERENCE --
-audio_segments = extract_segmented_logmels(AUDIO_PATH)
-if audio_segments is None:
+y, _ = librosa.load(AUDIO_PATH, sr=SR)
+seg_len = int(SEGMENT_DURATION * SR)
+hop_len = int(seg_len * (1 - OVERLAP_RATIO))
+
+segment_embeddings = []
+for i in range(0, len(y) - seg_len + 1, hop_len):
+    segment = y[i:i + seg_len]
+    mel_spec = compute_mel_spectrogram(segment)  # (1, 1, n_mels, time)
+    emb = audio_session.run(None, {"mel_spectrogram": mel_spec})[0]  # (1, embed_dim)
+    segment_embeddings.append(emb)
+
+if not segment_embeddings:
     raise RuntimeError("Audio too short for configured window length!")
-audio_embs = audio_model.run(None, {"input": audio_segments})[0]  # [num_segs, embed_dim]
-avg_audio_emb = np.mean(audio_embs, axis=0, keepdims=True)        # [1, embed_dim]
+
+avg_audio_emb = np.mean(np.concatenate(segment_embeddings, axis=0), axis=0, keepdims=True)  # (1, embed_dim)
 
 # -- TEXT ENCODER INFERENCE --
-# CLAP encoders require exactly length=77s
+# CLAP encoders require exactly length=77
 tok = tokenizer(TEXT_QUERY, padding="max_length", truncation=True, max_length=77, return_tensors="np")
 text_emb = text_model.run(None, {
     "input_ids": tok["input_ids"].astype(np.int64),
@@ -103,7 +109,7 @@ text_emb = text_model.run(None, {
 # -- MATCH AUDIO & TEXT --
 sim = cosine_similarity(avg_audio_emb, text_emb).item()
 print(f"Text Query: {TEXT_QUERY}")
-print(f"Audio segments processed: {len(audio_embs)}")
+print(f"Audio segments processed: {len(segment_embeddings)}")
 print(f"Similarity score: {sim:.4f}")
 ```
 
